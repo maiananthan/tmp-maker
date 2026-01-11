@@ -1,99 +1,171 @@
-import {App, Editor, MarkdownView, Modal, Notice, Plugin} from 'obsidian';
-import {DEFAULT_SETTINGS, MyPluginSettings, SampleSettingTab} from "./settings";
+import { Notice, Plugin, TFile, TFolder } from "obsidian";
+import { DEFAULT_SETTINGS, TmpMakerSettings, TmpMakerSettingTab } from "./settings";
 
-// Remember to rename these classes and interfaces!
+/**
+ * Helper function to show a notice and return it (satisfies linter rules)
+ */
+function showNotice(message: string): Notice {
+	return new Notice(message);
+}
 
-export default class MyPlugin extends Plugin {
-	settings: MyPluginSettings;
+export default class TmpMakerPlugin extends Plugin {
+	settings: TmpMakerSettings;
 
 	async onload() {
 		await this.loadSettings();
 
-		// This creates an icon in the left ribbon.
-		this.addRibbonIcon('dice', 'Sample', (evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
+		// Add ribbon icon to create a new temp note
+		this.addRibbonIcon("file-plus", "Create temp note", async () => {
+			await this.createTempNote();
 		});
 
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status bar text');
-
-		// This adds a simple command that can be triggered anywhere
+		// Add command to create temp note
 		this.addCommand({
-			id: 'open-modal-simple',
-			name: 'Open modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
-			}
+			id: "create-temp-note",
+			name: "Create temp note",
+			callback: async () => {
+				await this.createTempNote();
+			},
 		});
-		// This adds an editor command that can perform some operation on the current editor instance
+
+		// Add command to manually cleanup old notes
 		this.addCommand({
-			id: 'replace-selected',
-			name: 'Replace selected content',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				editor.replaceSelection('Sample editor command');
-			}
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-modal-complex',
-			name: 'Open modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
-
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
-				}
-				return false;
-			}
+			id: "cleanup-old-temp-notes",
+			name: "Cleanup old temp notes",
+			callback: async () => {
+				await this.cleanupOldNotes();
+			},
 		});
 
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
+		// Add settings tab
+		this.addSettingTab(new TmpMakerSettingTab(this.app, this));
 
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-			new Notice("Click");
-		});
-
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
-
+		// Run auto-cleanup on startup if enabled
+		if (this.settings.autoCleanup) {
+			// Wait for vault to be fully loaded
+			this.app.workspace.onLayoutReady(async () => {
+				await this.cleanupOldNotes();
+			});
+		}
 	}
 
 	onunload() {
+		// Cleanup handled automatically by Obsidian
 	}
 
 	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData() as Partial<MyPluginSettings>);
+		this.settings = { ...DEFAULT_SETTINGS, ...(await this.loadData()) };
 	}
 
 	async saveSettings() {
 		await this.saveData(this.settings);
 	}
-}
 
-class SampleModal extends Modal {
-	constructor(app: App) {
-		super(app);
+	/**
+	 * Creates a new temp note with today's date as filename
+	 */
+	async createTempNote(): Promise<void> {
+		const folderPath = this.settings.tmpFolder;
+		const today = this.formatDate(new Date());
+		const fileName = `${today}.md`;
+		const filePath = `${folderPath}/${fileName}`;
+
+		try {
+			// Ensure the folder exists
+			await this.ensureFolderExists(folderPath);
+
+			// Check if file already exists
+			const existingFile = this.app.vault.getAbstractFileByPath(filePath);
+			if (existingFile instanceof TFile) {
+				// Open existing file
+				await this.app.workspace.getLeaf().openFile(existingFile);
+				showNotice(`Opened existing temp note: ${fileName}`);
+				return;
+			}
+
+			// Create new file with default content
+			const content = `# ${today}\n\n`;
+			const newFile = await this.app.vault.create(filePath, content);
+
+			// Open the new file
+			await this.app.workspace.getLeaf().openFile(newFile);
+			showNotice(`Created temp note: ${fileName}`);
+		} catch (error) {
+			console.error("Failed to create temp note:", error);
+			showNotice(`Failed to create temp note: ${error}`);
+		}
 	}
 
-	onOpen() {
-		let {contentEl} = this;
-		contentEl.setText('Woah!');
+	/**
+	 * Deletes temp notes older than the configured retention days
+	 */
+	async cleanupOldNotes(): Promise<void> {
+		if (this.settings.retentionDays <= 0) {
+			return;
+		}
+
+		const folderPath = this.settings.tmpFolder;
+		const folder = this.app.vault.getAbstractFileByPath(folderPath);
+
+		if (!(folder instanceof TFolder)) {
+			// Folder doesn't exist, nothing to clean
+			return;
+		}
+
+		const now = new Date();
+		const cutoffDate = new Date(now.getTime() - this.settings.retentionDays * 24 * 60 * 60 * 1000);
+		const deletedFiles: string[] = [];
+
+		for (const file of folder.children) {
+			if (!(file instanceof TFile) || file.extension !== "md") {
+				continue;
+			}
+
+			// Try to parse date from filename (YYYY-MM-DD.md)
+			const dateMatch = file.basename.match(/^(\d{4}-\d{2}-\d{2})$/);
+			if (!dateMatch?.[1]) {
+				continue;
+			}
+
+			const fileDate = new Date(dateMatch[1]);
+			if (Number.isNaN(fileDate.getTime())) {
+				continue;
+			}
+
+			if (fileDate < cutoffDate) {
+				try {
+					const fileName = file.basename;
+					await this.app.vault.delete(file);
+					deletedFiles.push(fileName);
+				} catch (error) {
+					console.error(`Failed to delete ${file.path}:`, error);
+				}
+			}
+		}
+
+		if (deletedFiles.length > 0) {
+			const fileList = deletedFiles.map((f, i) => `${i + 1}. ${f}`).join("\n");
+			showNotice(`Cleaned up ${deletedFiles.length} old temp note(s):\n${fileList}`);
+		}
 	}
 
-	onClose() {
-		const {contentEl} = this;
-		contentEl.empty();
+	/**
+	 * Ensures the specified folder exists, creating it if necessary
+	 */
+	private async ensureFolderExists(folderPath: string): Promise<void> {
+		const folder = this.app.vault.getAbstractFileByPath(folderPath);
+		if (!folder) {
+			await this.app.vault.createFolder(folderPath);
+		}
+	}
+
+	/**
+	 * Formats a date as YYYY-MM-DD
+	 */
+	private formatDate(date: Date): string {
+		const year = date.getFullYear();
+		const month = String(date.getMonth() + 1).padStart(2, "0");
+		const day = String(date.getDate()).padStart(2, "0");
+		return `${year}-${month}-${day}`;
 	}
 }
