@@ -54,7 +54,8 @@ export default class TmpMakerPlugin extends Plugin {
 	}
 
 	async loadSettings() {
-		this.settings = { ...DEFAULT_SETTINGS, ...(await this.loadData()) };
+		const data = (await this.loadData()) as Partial<TmpMakerSettings> | null;
+		this.settings = { ...DEFAULT_SETTINGS, ...data };
 	}
 
 	async saveSettings() {
@@ -92,7 +93,7 @@ export default class TmpMakerPlugin extends Plugin {
 			showNotice(`Created temp note: ${fileName}`);
 		} catch (error) {
 			console.error("Failed to create temp note:", error);
-			showNotice(`Failed to create temp note: ${error}`);
+			showNotice(`Failed to create temp note: ${String(error)}`);
 		}
 	}
 
@@ -135,7 +136,7 @@ export default class TmpMakerPlugin extends Plugin {
 			if (fileDate < cutoffDate) {
 				try {
 					const fileName = file.basename;
-					await this.app.vault.delete(file);
+					await this.app.fileManager.trashFile(file);
 					deletedFiles.push(fileName);
 				} catch (error) {
 					console.error(`Failed to delete ${file.path}:`, error);

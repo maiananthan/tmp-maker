@@ -28,14 +28,12 @@ export class TmpMakerSettingTab extends PluginSettingTab {
 		const { containerEl } = this;
 		containerEl.empty();
 
-		containerEl.createEl("h2", { text: "Temp note maker settings" });
-
 		new Setting(containerEl)
 			.setName("Temp folder")
 			.setDesc("Folder path where temporary notes will be created")
 			.addText((text) =>
 				text
-					.setPlaceholder("tmp")
+					.setPlaceholder("Tmp")
 					.setValue(this.plugin.settings.tmpFolder)
 					.onChange(async (value) => {
 						this.plugin.settings.tmpFolder = value || "tmp";
@@ -70,3 +68,7 @@ export class TmpMakerSettingTab extends PluginSettingTab {
 			);
 	}
 }
+
+//
+// end of file
+//
