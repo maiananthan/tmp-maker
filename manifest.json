@@ -1,7 +1,7 @@
 {
     "id": "tmp-maker",
     "name": "Temp Note Maker",
-    "version": "1.0.0",
+    "version": "1.0.2",
     "minAppVersion": "1.4.0",
     "description": "Creates temporary notes with today's date and auto-cleans old notes.",
     "author": "maiananthan",
