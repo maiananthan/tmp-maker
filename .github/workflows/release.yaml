@@ -8,8 +8,12 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     permissions:
       contents: write
+      id-token: write
+      attestions: write
+
     steps:
       - uses: actions/checkout@v3
 
@@ -33,3 +37,15 @@ jobs:
             --title="$tag" \
             --draft \
             main.js manifest.json styles.css
+
+      - name: Generate artifact attestation
+        uses: actions/attest@v4
+        with:
+            subject-path: |
+              main.js
+              manifest.json
+              styles.css
+
+#
+# end of file
+#
